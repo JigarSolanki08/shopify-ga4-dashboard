@@ -52,6 +52,9 @@ export default defineConfig({
   build: {
     assetsInlineLimit: 0,
   },
+  ssr: {
+    noExternal: ["recharts", "victory-vendor"],
+  },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react"],
   },

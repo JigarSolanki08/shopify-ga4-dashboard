@@ -19,65 +19,119 @@ export async function fetchGA4Analytics({
   });
 
   const client = await auth.getClient();
-  const safePropertyId = propertyId.startsWith("properties/") ? propertyId : `properties/${propertyId}`;
-  const url = `https://analyticsdata.googleapis.com/v1beta/${safePropertyId}:runReport`;
+  const safe = propertyId.startsWith("properties/")
+    ? propertyId
+    : `properties/${propertyId}`;
+  const url = `https://analyticsdata.googleapis.com/v1beta/${safe}:runReport`;
 
-  const commonMetrics = [
-    { name: "screenPageViews" },
-    { name: "sessions" },
-    { name: "totalUsers" },
-    { name: "conversions" },
+  // Metric definitions
+  const coreMetrics = [
+    { name: "screenPageViews" },   // [0]
+    { name: "sessions" },          // [1]
+    { name: "totalUsers" },        // [2]
+    { name: "conversions" },       // [3]
   ];
 
-  // Request 1: Current Period Time-Series (For the line chart and current totals)
+  // 1. Current period — time series by date (for charts)
   const reqCurrent = client.request({
-    url,
-    method: "POST",
+    url, method: "POST",
     data: {
       dateRanges: [{ startDate, endDate }],
-      metrics: commonMetrics,
+      metrics: coreMetrics,
       dimensions: [{ name: "date" }],
     },
   });
 
-  // Request 2: Previous Period Totals (For percentage trend calculations)
+  // 2. Previous period — totals only (for trend badges)
   const reqPrevious = client.request({
-    url,
-    method: "POST",
+    url, method: "POST",
     data: {
       dateRanges: [{ startDate: prevStartDate, endDate: prevEndDate }],
-      metrics: commonMetrics,
-      // No date dimension here to get a single aggregated row of totals
+      metrics: coreMetrics,
     },
   });
 
-  // Request 3: Organic SEO / Landing Pages (Fallback for Brand Search Keywords)
+  // 3. Top landing pages by sessions (organic search)
   const reqOrganic = client.request({
-    url,
-    method: "POST",
+    url, method: "POST",
     data: {
-      dateRanges: [{ startDate, endDate }, { startDate: prevStartDate, endDate: prevEndDate }],
+      dateRanges: [{ startDate, endDate }],
       metrics: [{ name: "sessions" }],
-      dimensions: [{ name: "sessionDefaultChannelGroup" }, { name: "landingPagePlusQueryString" }],
+      dimensions: [
+        { name: "sessionDefaultChannelGroup" },
+        { name: "landingPagePlusQueryString" },
+      ],
       dimensionFilter: {
         filter: {
           fieldName: "sessionDefaultChannelGroup",
-          stringFilter: {
-            matchType: "EXACT",
-            value: "Organic Search"
-          }
-        }
+          stringFilter: { matchType: "EXACT", value: "Organic Search" },
+        },
       },
       orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
-      limit: 6
+      limit: 8,
     },
   });
 
-  const [resCurrent, resPrevious, resOrganic] = await Promise.all([reqCurrent, reqPrevious, reqOrganic]);
+  // 4. Channel breakdown (traffic sources)
+  const reqChannels = client.request({
+    url, method: "POST",
+    data: {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }],
+      dimensions: [{ name: "sessionDefaultChannelGroup" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+      limit: 8,
+    },
+  });
+
+  // 5. Top pages by page views
+  const reqTopPages = client.request({
+    url, method: "POST",
+    data: {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [
+        { name: "screenPageViews" },
+        { name: "sessions" },
+      ],
+      dimensions: [{ name: "pagePath" }],
+      orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }],
+      limit: 8,
+    },
+  });
+
+  // 6. Device category breakdown
+  const reqDevices = client.request({
+    url, method: "POST",
+    data: {
+      dateRanges: [{ startDate, endDate }],
+      metrics: [{ name: "sessions" }, { name: "totalUsers" }],
+      dimensions: [{ name: "deviceCategory" }],
+      orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
+    },
+  });
+
+  const [
+    resCurrent,
+    resPrevious,
+    resOrganic,
+    resChannels,
+    resTopPages,
+    resDevices,
+  ] = await Promise.all([
+    reqCurrent,
+    reqPrevious,
+    reqOrganic,
+    reqChannels,
+    reqTopPages,
+    reqDevices,
+  ]);
 
   return {
     currentPeriod: resCurrent.data,
     previousPeriod: resPrevious.data,
     organicTraffic: resOrganic.data,
+    channels: resChannels.data,
+    topPages: resTopPages.data,
+    devices: resDevices.data,
   };
 }
